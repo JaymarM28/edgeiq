@@ -1,0 +1,263 @@
+// Prisma schema — EdgeIQ
+// Paso 2 del roadmap (Diseño de esquema). Entidades definidas en docs/DATABASE.md.
+//
+// Notas de diseño (ver docs/DECISIONS.md para el detalle):
+// - Team no está atado a una League fija: la relación real ocurre vía Match.
+// - Odds es una serie temporal (una fila por fetch), no un valor mutable.
+// - market/selection quedan como String hasta que se elija el proveedor de
+//   datos (docs/TODO.md → "Elegir APIs"); se formalizarán en enum después.
+// - Result se mantiene separado de Match para distinguir lo programado de
+//   lo ocurrido (útil para backtesting, docs/LEARNINGS.md).
+// - User queda genérico (sin estrategia de auth definida todavía).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MatchStatus {
+  SCHEDULED
+  LIVE
+  FINISHED
+  POSTPONED
+  CANCELLED
+}
+
+enum NotificationType {
+  VALUE_BET
+  RESULT_UPDATE
+  SYSTEM
+}
+
+model League {
+  id         String   @id @default(cuid())
+  name       String
+  country    String?
+  sport      String   @default("football")
+  externalId String?  @unique
+  matches    Match[]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([sport])
+}
+
+model Team {
+  id          String   @id @default(cuid())
+  name        String
+  shortName   String?
+  country     String?
+  externalId  String?  @unique
+  players         Player[]
+  homeMatches     Match[]          @relation("HomeTeam")
+  awayMatches     Match[]          @relation("AwayTeam")
+  matchStatistics MatchStatistic[]
+  playerStats     PlayerMatchStat[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+}
+
+model Match {
+  id          String       @id @default(cuid())
+  league      League       @relation(fields: [leagueId], references: [id])
+  leagueId    String
+  homeTeam    Team         @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  homeTeamId  String
+  awayTeam    Team         @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  awayTeamId  String
+  kickoffAt   DateTime
+  status      MatchStatus  @default(SCHEDULED)
+  season      String?
+  matchday    Int?
+  externalId  String?      @unique
+  odds            Odds[]
+  predictions     Prediction[]
+  result          Result?
+  matchStatistics MatchStatistic[]
+  playerStats     PlayerMatchStat[]
+  analyses        MatchAnalysis[]
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([leagueId])
+  @@index([kickoffAt])
+  @@index([status])
+}
+
+model Player {
+  id          String    @id @default(cuid())
+  name        String
+  position    String?
+  dateOfBirth DateTime?
+  externalId  String?          @unique
+  team        Team?            @relation(fields: [teamId], references: [id])
+  teamId      String?
+  matchStats  PlayerMatchStat[]
+  injuries    PlayerInjury[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([teamId])
+}
+
+/// Serie temporal: una fila por cada lectura de cuota (no se actualiza in-place).
+model Odds {
+  id        String   @id @default(cuid())
+  match     Match    @relation(fields: [matchId], references: [id])
+  matchId   String
+  bookmaker String
+  market    String
+  selection String
+  price     Decimal  @db.Decimal(10, 3)
+  fetchedAt DateTime @default(now())
+
+  @@index([matchId, market, selection])
+  @@index([fetchedAt])
+}
+
+/// Una fila por (partido, mercado, selección, modelo): `upsert` en vez de
+/// `create` para que cada regeneración actualice la predicción vigente en
+/// vez de acumular filas viejas que nunca se limpian (docs/DECISIONS.md).
+model Prediction {
+  id                 String   @id @default(cuid())
+  match              Match    @relation(fields: [matchId], references: [id])
+  matchId            String
+  market             String
+  selection          String
+  modelName          String
+  modelProbability   Decimal  @db.Decimal(6, 5)
+  impliedProbability Decimal? @db.Decimal(6, 5)
+  edge               Decimal? @db.Decimal(6, 5)
+  explanation        String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([matchId, market, selection, modelName])
+  @@index([matchId])
+  @@index([modelName])
+}
+
+/// Separado de Match a propósito: registra lo ocurrido, no lo programado.
+model Result {
+  id        String   @id @default(cuid())
+  match     Match    @relation(fields: [matchId], references: [id])
+  matchId   String   @unique
+  homeScore Int
+  awayScore Int
+  settledAt DateTime @default(now())
+}
+
+/// Estadísticas de equipo por partido terminado (corners, tiros, tarjetas…).
+/// Se ingieren desde API-Football `/fixtures/statistics` para alimentar el
+/// modelo Poisson de eventos (Nivel 1 — docs/DECISIONS.md).
+model MatchStatistic {
+  id            String   @id @default(cuid())
+  match         Match    @relation(fields: [matchId], references: [id])
+  matchId       String
+  team          Team     @relation(fields: [teamId], references: [id])
+  teamId        String
+  corners       Int      @default(0)
+  shotsOnTarget Int      @default(0)
+  shotsTotal    Int      @default(0)
+  yellowCards   Int      @default(0)
+  redCards      Int      @default(0)
+  fouls         Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  @@unique([matchId, teamId])
+  @@index([teamId])
+}
+
+/// Estadísticas individuales de jugador por partido terminado.
+/// Se ingieren desde API-Football `/fixtures/players` para alimentar el
+/// modelo Poisson de jugadores (Nivel 2 — docs/DECISIONS.md).
+model PlayerMatchStat {
+  id             String   @id @default(cuid())
+  match          Match    @relation(fields: [matchId], references: [id])
+  matchId        String
+  player         Player   @relation(fields: [playerId], references: [id])
+  playerId       String
+  team           Team     @relation(fields: [teamId], references: [id])
+  teamId         String
+  minutes        Int      @default(0)
+  shotsTotal     Int      @default(0)
+  shotsOn        Int      @default(0)
+  goals          Int      @default(0)
+  assists        Int      @default(0)
+  yellowCards    Int      @default(0)
+  redCards       Int      @default(0)
+  foulsCommitted Int      @default(0)
+  foulsDrawn     Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  @@unique([matchId, playerId])
+  @@index([playerId])
+  @@index([teamId])
+}
+
+/// Lesiones y sanciones activas. Se sincroniza desde API-Football `/injuries`.
+/// `fixtureExternalId` almacena el fixture de la API para evitar duplicados.
+model PlayerInjury {
+  id                 String    @id @default(cuid())
+  player             Player    @relation(fields: [playerId], references: [id])
+  playerId           String
+  teamExternalId     String?
+  fixtureExternalId  String?
+  type               String                        // "Missing Fixture" (injury or suspension)
+  reason             String                        // "Knee Injury", "Suspended", etc.
+  status             String    @default("active")  // active | recovered
+  reportedAt         DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@unique([playerId, fixtureExternalId])
+  @@index([playerId])
+  @@index([status])
+}
+
+/// Análisis generados por LLM (Groq) para partidos.
+/// `type` distingue pre-partido (datos + predicción propia del LLM) de
+/// post-partido (evaluación de acierto/fallo con explicación).
+model MatchAnalysis {
+  id        String   @id @default(cuid())
+  match     Match    @relation(fields: [matchId], references: [id])
+  matchId   String
+  type      String                // "pre_match" | "post_match"
+  content   String   @db.Text     // Análisis completo del LLM
+  metadata  Json?                 // Datos usados como contexto (stats, forma, etc.)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([matchId, type])
+  @@index([matchId])
+  @@index([type])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  user      User             @relation(fields: [userId], references: [id])
+  userId    String
+  type      NotificationType
+  title     String
+  body      String
+  payload   Json?
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  @@index([userId, read])
+}
+
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  name          String?
+  passwordHash  String?
+  resetCode     String?
+  resetCodeExp  DateTime?
+  notifications Notification[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}

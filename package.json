@@ -1,0 +1,23 @@
+{
+  "name": "edgeiq",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev:api": "pnpm --filter @edgeiq/api dev",
+    "dev:web": "pnpm --filter @edgeiq/web dev",
+    "build": "pnpm --recursive --filter \"./apps/*\" --if-present build",
+    "lint": "pnpm --recursive --if-present lint",
+    "format": "prettier --write .",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2",
+    "husky": "^9.1.7",
+    "@commitlint/cli": "^19.6.1",
+    "@commitlint/config-conventional": "^19.6.0"
+  }
+}

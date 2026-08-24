@@ -1,0 +1,18 @@
+# Crítico para builds multi-plataforma: sin esto, `COPY . .` en los
+# Dockerfiles copia el node_modules del host (compilado para tu SO/arch)
+# encima del que el contenedor instaló para Linux, rompiendo binarios
+# nativos como el motor de Prisma (docs/DECISIONS.md).
+node_modules
+**/node_modules
+.next
+**/.next
+dist
+**/dist
+coverage
+**/coverage
+.git
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store

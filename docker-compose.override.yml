@@ -1,0 +1,38 @@
+# Se aplica automáticamente en `docker compose up` (entorno de desarrollo).
+# Monta el código fuente para hot-reload y expone los puertos al host.
+services:
+  api:
+    build:
+      target: dev
+    ports:
+      - "${API_PORT:-4000}:4000"
+    environment:
+      NODE_ENV: development
+    volumes:
+      - .:/repo
+      - /repo/node_modules
+      - /repo/apps/api/node_modules
+
+  web:
+    build:
+      target: dev
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: development
+    volumes:
+      - .:/repo
+      - /repo/node_modules
+      - /repo/apps/web/node_modules
+      - /repo/apps/web/.next
+
+  postgres:
+    # 5433 en el host: en esta máquina el 5432 ya lo ocupa un Postgres nativo
+    # (ver docs/DECISIONS.md). Dentro de la red de Docker sigue siendo 5432
+    # (el api se conecta vía "postgres:5432", no se ve afectado).
+    ports:
+      - "5433:5432"
+
+  redis:
+    ports:
+      - "6379:6379"

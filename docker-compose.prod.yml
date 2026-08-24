@@ -1,0 +1,20 @@
+# Uso: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# No incluye docker-compose.override.yml (solo se aplica cuando no se pasan -f explícitos).
+services:
+  api:
+    build:
+      target: prod
+    ports:
+      - "${API_PORT:-4000}:4000"
+    environment:
+      NODE_ENV: production
+    restart: always
+
+  web:
+    build:
+      target: prod
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+    restart: always

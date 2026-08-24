@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-edgeiq}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-edgeiq}
+      POSTGRES_DB: ${POSTGRES_DB:-edgeiq}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-edgeiq}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Dentro de la red de Docker Compose el host de Postgres/Redis es el
+      # nombre del servicio, no "localhost" (eso apunta al propio contenedor
+      # del api). El .env con "localhost" sigue sido correcto para correr
+      # la API fuera de Docker (pnpm --filter @edgeiq/api dev).
+      DATABASE_URL: postgresql://${POSTGRES_USER:-edgeiq}:${POSTGRES_PASSWORD:-edgeiq}@postgres:5432/${POSTGRES_DB:-edgeiq}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
+  redis_data:
