@@ -34,4 +34,6 @@ FROM base AS prod
 ENV NODE_ENV=production
 COPY --from=build /prod/api ./
 EXPOSE 4000
-CMD ["node", "dist/main.js"]
+# Aplica migraciones pendientes contra DATABASE_URL antes de arrancar —
+# necesario en el primer deploy contra una base de datos nueva (ej. Railway).
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
