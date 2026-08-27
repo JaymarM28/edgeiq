@@ -1,6 +1,8 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import Redis from 'ioredis';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -23,6 +25,14 @@ import { AnalysisModule } from './domain/analysis/analysis.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ThrottlerModule.forRoot([
+      {
+        // Límite global por defecto: 100 req/min por IP. Endpoints
+        // sensibles (auth) usan @Throttle con un límite más estricto.
+        ttl: 60_000,
+        limit: 100,
+      },
+    ]),
     BullModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -52,6 +62,6 @@ import { AnalysisModule } from './domain/analysis/analysis.module';
     AnalysisModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}

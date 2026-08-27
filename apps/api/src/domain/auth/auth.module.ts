@@ -4,6 +4,7 @@ import { JwtModule, type JwtSignOptions } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { resolveJwtSecret } from './jwt-secret';
 import { JwtStrategy } from './jwt.strategy';
 
 @Module({
@@ -13,10 +14,7 @@ import { JwtStrategy } from './jwt.strategy';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>(
-          'JWT_SECRET',
-          'edgeiq-dev-secret-change-in-prod',
-        ),
+        secret: resolveJwtSecret(config),
         signOptions: {
           expiresIn: config.get<string>(
             'JWT_EXPIRES_IN',

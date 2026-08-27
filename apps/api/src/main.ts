@@ -7,7 +7,11 @@ import { HttpExceptionFilter } from './core/filters/http-exception.filter';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  app.enableCors();
+  // En producción, restringido al dominio del frontend (CORS_ORIGIN).
+  // En dev, si no está seteado, se permite cualquier origen para no
+  // fricción con `next dev` en puertos variables.
+  const corsOrigin = process.env.CORS_ORIGIN;
+  app.enableCors({ origin: corsOrigin ? corsOrigin.split(',') : true });
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
 
   app.useGlobalFilters(new HttpExceptionFilter());
