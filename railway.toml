@@ -1,0 +1,7 @@
+# Config-as-code para el servicio de la API en Railway.
+# Railpack (el builder automático) no sabe qué paquete arrancar en un
+# monorepo pnpm con 3 workspaces — forzamos el Dockerfile que ya
+# construye/migra/arranca la API (ver apps/api/Dockerfile, stage "prod").
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "apps/api/Dockerfile"
