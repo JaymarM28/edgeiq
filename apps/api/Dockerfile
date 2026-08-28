@@ -34,6 +34,9 @@ FROM base AS prod
 ENV NODE_ENV=production
 COPY --from=build /prod/api ./
 EXPOSE 4000
-# Aplica migraciones pendientes contra DATABASE_URL antes de arrancar —
-# necesario en el primer deploy contra una base de datos nueva (ej. Railway).
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
+# `pnpm deploy --prod` (stage build) no copia el Prisma Client generado —
+# vive en una ubicación "hoisted" del store de pnpm que el paquete aislado
+# no hereda. Regenerarlo acá es más simple que pelear con pnpm deploy, y
+# migrate deploy aplica migraciones pendientes (necesario en el primer
+# deploy contra una base de datos nueva, ej. Railway).
+CMD ["sh", "-c", "npx prisma generate && npx prisma migrate deploy && node dist/main.js"]
