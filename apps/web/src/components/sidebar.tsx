@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { BarChart3, TrendingUp, Users, Zap, FlaskConical, LogOut, User, BrainCircuit, Shield } from 'lucide-react';
+import { BarChart3, TrendingUp, Users, Zap, FlaskConical, LogOut, User, BrainCircuit, Shield, Database } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ThemeToggle } from './theme-toggle';
 import { useAuth } from '@/lib/auth';
@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { href: '/teams', label: 'Equipos', icon: Shield },
   { href: '/players', label: 'Jugadores', icon: Users },
   { href: '/backtesting', label: 'Backtesting', icon: FlaskConical },
+  { href: '/admin', label: 'Sincronización', icon: Database },
 ] as const;
 
 export function Sidebar() {

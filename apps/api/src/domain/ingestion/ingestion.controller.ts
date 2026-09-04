@@ -1,4 +1,4 @@
-import { Controller, Post, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { IngestionService } from './ingestion.service';
 
@@ -13,5 +13,11 @@ export class IngestionController {
       leagueId: leagueId ? Number(leagueId) : undefined,
       season: season ? Number(season) : undefined,
     });
+  }
+
+  /** Progreso de la sincronización en curso (polling). */
+  @Get('sync/progress')
+  getProgress() {
+    return this.ingestionService.progress;
   }
 }

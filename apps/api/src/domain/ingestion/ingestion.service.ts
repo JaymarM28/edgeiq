@@ -50,6 +50,16 @@ export interface SyncAllResult {
   injuries: SyncOutcome;
 }
 
+export interface IngestionProgress {
+  status: 'idle' | 'running' | 'done' | 'error';
+  phase: string;
+  current: number;
+  total: number;
+  detail: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
 /**
  * Orquesta la sincronización con API-Football hacia el esquema Prisma.
  *
@@ -62,6 +72,25 @@ export interface SyncAllResult {
 @Injectable()
 export class IngestionService {
   private readonly logger = new Logger(IngestionService.name);
+
+  /** Progreso in-memory para polling desde el frontend. */
+  private _progress: IngestionProgress = {
+    status: 'idle',
+    phase: '',
+    current: 0,
+    total: 0,
+    detail: '',
+    startedAt: null,
+    finishedAt: null,
+  };
+
+  get progress(): IngestionProgress {
+    return { ...this._progress };
+  }
+
+  private updateProgress(update: Partial<IngestionProgress>) {
+    Object.assign(this._progress, update);
+  }
 
   constructor(
     private readonly apiFootball: ApiFootballService,
@@ -486,6 +515,7 @@ export class IngestionService {
     const league = await this.upsertLeague(resolved);
     const season = seasonOverride ?? resolved.currentSeason;
 
+    this.updateProgress({ detail: `${resolved.name}: sincronizando fixtures…` });
     this.logger.log(`  [${resolved.name}] Sincronizando fixtures…`);
     let fixtures: SyncOutcome;
     try {
@@ -519,6 +549,7 @@ export class IngestionService {
       }
     }
 
+    this.updateProgress({ detail: `${resolved.name}: sincronizando odds…` });
     this.logger.log(`  [${resolved.name}] Sincronizando odds…`);
     let odds: SyncOutcome;
     try {
@@ -534,6 +565,7 @@ export class IngestionService {
     }
 
     // Stats de equipo y jugador para partidos terminados sin stats
+    this.updateProgress({ detail: `${resolved.name}: sincronizando match stats…` });
     this.logger.log(`  [${resolved.name}] Sincronizando match stats…`);
     let matchStats: SyncOutcome;
     try {
@@ -548,6 +580,7 @@ export class IngestionService {
       );
     }
 
+    this.updateProgress({ detail: `${resolved.name}: sincronizando player stats…` });
     this.logger.log(`  [${resolved.name}] Sincronizando player stats…`);
     let playerStats: SyncOutcome;
     try {
@@ -563,6 +596,7 @@ export class IngestionService {
     }
 
     // Lesiones y sanciones
+    this.updateProgress({ detail: `${resolved.name}: sincronizando lesiones…` });
     this.logger.log(`  [${resolved.name}] Sincronizando lesiones…`);
     let injuries: SyncOutcome;
     try {
@@ -602,42 +636,71 @@ export class IngestionService {
     const queries: Array<{ id: number } | { name: string; country: string }> =
       options?.leagueId ? [{ id: options.leagueId }] : TRACKED_LEAGUES;
 
+    this.updateProgress({
+      status: 'running',
+      phase: 'sync',
+      current: 0,
+      total: queries.length,
+      detail: 'Iniciando sincronización…',
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+    });
+
     const results: SyncAllResult[] = [];
-    for (let qi = 0; qi < queries.length; qi += 1) {
-      const query = queries[qi];
-      this.logger.log(
-        `[${qi + 1}/${queries.length}] Resolviendo liga ${
-          'id' in query
-            ? `id=${query.id}`
-            : `"${query.name}" (${query.country})`
-        }…`,
-      );
-      const resolved = await this.apiFootball.resolveLeague(query);
-      if (!resolved) {
-        const label =
-          'id' in query
-            ? `id=${query.id}`
-            : `"${query.name}" (${query.country})`;
-        this.logger.warn(
-          `No se pudo resolver la liga ${label} en API-Football`,
+    try {
+      for (let qi = 0; qi < queries.length; qi += 1) {
+        const query = queries[qi];
+        this.updateProgress({ current: qi });
+        this.logger.log(
+          `[${qi + 1}/${queries.length}] Resolviendo liga ${
+            'id' in query
+              ? `id=${query.id}`
+              : `"${query.name}" (${query.country})`
+          }…`,
         );
-        results.push({
-          league: label,
-          leagueId: 'id' in query ? query.id : null,
-          season: null,
-          fixtures: { error: 'Liga no encontrada en API-Football' },
-          odds: { error: 'Liga no encontrada en API-Football' },
-          matchStats: { error: 'Liga no encontrada en API-Football' },
-          playerStats: { error: 'Liga no encontrada en API-Football' },
-          injuries: { error: 'Liga no encontrada en API-Football' },
+        const resolved = await this.apiFootball.resolveLeague(query);
+        if (!resolved) {
+          const label =
+            'id' in query
+              ? `id=${query.id}`
+              : `"${query.name}" (${query.country})`;
+          this.logger.warn(
+            `No se pudo resolver la liga ${label} en API-Football`,
+          );
+          results.push({
+            league: label,
+            leagueId: 'id' in query ? query.id : null,
+            season: null,
+            fixtures: { error: 'Liga no encontrada en API-Football' },
+            odds: { error: 'Liga no encontrada en API-Football' },
+            matchStats: { error: 'Liga no encontrada en API-Football' },
+            playerStats: { error: 'Liga no encontrada en API-Football' },
+            injuries: { error: 'Liga no encontrada en API-Football' },
+          });
+          continue;
+        }
+        this.updateProgress({
+          detail: `${resolved.name}: resuelta, iniciando sincronización…`,
         });
-        continue;
+        this.logger.log(
+          `[${qi + 1}/${queries.length}] Sincronizando ${resolved.name} (${resolved.id}) temporada ${options?.season ?? resolved.currentSeason}…`,
+        );
+        results.push(await this.syncResolvedLeague(resolved, options?.season));
       }
-      this.logger.log(
-        `[${qi + 1}/${queries.length}] Sincronizando ${resolved.name} (${resolved.id}) temporada ${options?.season ?? resolved.currentSeason}…`,
-      );
-      results.push(await this.syncResolvedLeague(resolved, options?.season));
+      this.updateProgress({
+        status: 'done',
+        current: queries.length,
+        detail: 'Sincronización completada.',
+        finishedAt: new Date().toISOString(),
+      });
+      return results;
+    } catch (err) {
+      this.updateProgress({
+        status: 'error',
+        detail: err instanceof Error ? err.message : 'Error desconocido',
+        finishedAt: new Date().toISOString(),
+      });
+      throw err;
     }
-    return results;
   }
 }
