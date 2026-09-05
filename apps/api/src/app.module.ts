@@ -20,6 +20,7 @@ import { AuthModule } from './domain/auth/auth.module';
 import { IngestionModule } from './domain/ingestion/ingestion.module';
 import { BacktestingModule } from './domain/backtesting/backtesting.module';
 import { GroqModule } from './core/integrations/groq/groq.module';
+import { ClaudeModule } from './core/integrations/claude/claude.module';
 import { AnalysisModule } from './domain/analysis/analysis.module';
 
 @Module({
@@ -55,6 +56,7 @@ import { AnalysisModule } from './domain/analysis/analysis.module';
       },
     }),
     GroqModule,
+    ClaudeModule,
     PrismaModule,
     LeaguesModule,
     TeamsModule,

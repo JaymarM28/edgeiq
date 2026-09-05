@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../core/prisma/prisma.service';
 import { GroqService } from '../../core/integrations/groq/groq.service';
+import { ClaudeService } from '../../core/integrations/claude/claude.service';
 
 const SYSTEM_PROMPT = `Eres un analista deportivo de élite especializado en apuestas de fútbol con enfoque cuantitativo. Tu trabajo es explicar en español POR QUÉ una apuesta específica tiene valor, basándote ÚNICAMENTE en los datos estadísticos que te proporciono.
 
@@ -66,8 +67,34 @@ export class ExplanationsService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly claude: ClaudeService,
     private readonly groq: GroqService,
   ) {}
+
+  /**
+   * Claude es el proveedor principal; si no está configurado o falla (ej.
+   * se acaba el crédito), cae a Groq automáticamente sin interrumpir el
+   * análisis — así se puede alternar entre proveedores sin tocar código.
+   */
+  private async chatWithFallback(
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+    options: { temperature?: number; maxTokens?: number },
+  ): Promise<string> {
+    if (this.claude.isConfigured) {
+      try {
+        return await this.claude.chat(messages, options);
+      } catch (err) {
+        this.logger.warn(
+          `Claude falló, usando Groq como respaldo: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+    if (this.groq.isConfigured) {
+      return this.groq.chat(messages, options);
+    }
+    this.logger.warn('Ningún proveedor LLM configurado (Claude ni Groq)');
+    return '';
+  }
 
   /**
    * Genera explicaciones para todas las value bets que no tienen una todavía.
@@ -76,8 +103,8 @@ export class ExplanationsService {
   async generateForPendingValueBets(
     onProgress?: (current: number, total: number) => void,
   ): Promise<number> {
-    if (!this.groq.isConfigured) {
-      this.logger.warn('Groq no configurado, se omiten explicaciones');
+    if (!this.claude.isConfigured && !this.groq.isConfigured) {
+      this.logger.warn('Ningún proveedor LLM configurado, se omiten explicaciones');
       return 0;
     }
 
@@ -435,7 +462,7 @@ export class ExplanationsService {
       'Con estos datos, explica POR QUÉ tiene valor esta predicción. Sé específico con los números.',
     );
 
-    return this.groq.chat(
+    return this.chatWithFallback(
       [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: lines.join('\n') },
