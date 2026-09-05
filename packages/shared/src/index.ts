@@ -4,6 +4,8 @@
 
 export const EDGEIQ_API_VERSION = 'v1';
 
+export * from './prop-suggestions';
+
 export type MatchStatus = 'SCHEDULED' | 'LIVE' | 'FINISHED' | 'POSTPONED' | 'CANCELLED';
 
 export type NotificationType = 'VALUE_BET' | 'RESULT_UPDATE' | 'SYSTEM';

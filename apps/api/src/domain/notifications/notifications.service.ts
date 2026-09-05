@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
+import type { DailyDigest } from './digest.service';
 
 export interface ValueBetAlert {
   match: string; // "Real Madrid vs Barcelona"
@@ -43,8 +44,11 @@ export class NotificationsService {
   }
 
   /**
-   * Envía alertas de value bets por ambos canales.
-   * Solo envía si hay al menos un bet de confianza alta.
+   * Alerta de value bets por WhatsApp únicamente. El email diario ahora lo
+   * cubre `sendDailyDigest` (partidos + props, sin el framing de edge que
+   * genera falsos positivos con pocos datos — ver docs/DECISIONS.md).
+   * `email` en el resultado queda fijo en `false`; se conserva en la firma
+   * para no romper a `sendTest`.
    */
   async notifyValueBets(
     bets: ValueBetAlert[],
@@ -55,15 +59,8 @@ export class NotificationsService {
       return { email: false, whatsapp: false };
     }
 
-    const [email, whatsapp] = await Promise.allSettled([
-      this.sendEmail(bets),
-      this.sendWhatsApp(bets),
-    ]);
-
-    return {
-      email: email.status === 'fulfilled' && email.value,
-      whatsapp: whatsapp.status === 'fulfilled' && whatsapp.value,
-    };
+    const whatsapp = await this.sendWhatsApp(bets);
+    return { email: false, whatsapp };
   }
 
   /** Envía un mensaje de prueba por ambos canales. */
@@ -118,6 +115,114 @@ export class NotificationsService {
       this.logger.error('Error enviando email transaccional', err);
       return false;
     }
+  }
+
+  // ── Digest diario (partidos + props de jugadores) ──
+
+  /**
+   * Envía el resumen diario a `NOTIFY_EMAIL`. A diferencia de las alertas
+   * de value bet (edge vs. casa), esto muestra directamente la
+   * recomendación del modelo y probabilidades de props — mismo criterio
+   * que usan las páginas /matches y /players (ver docs/DECISIONS.md:
+   * edges de 100%+ en arranque de temporada no son confiables).
+   */
+  async sendDailyDigest(digest: DailyDigest): Promise<boolean> {
+    if (!this.resend || !this.notifyEmail) return false;
+    if (digest.matches.length === 0 && digest.props.length === 0) {
+      this.logger.log('Digest diario sin contenido — sin notificación');
+      return false;
+    }
+
+    try {
+      await this.resend.emails.send({
+        from: this.emailFrom,
+        to: this.notifyEmail,
+        subject: `EdgeIQ: resumen del día (${digest.matches.length} partidos, ${digest.props.length} props)`,
+        html: this.dailyDigestTemplate(digest),
+      });
+      this.logger.log(`Digest diario enviado a ${this.notifyEmail}`);
+      return true;
+    } catch (err) {
+      this.logger.error('Error enviando digest diario', err);
+      return false;
+    }
+  }
+
+  /** Escapa texto de origen externo (nombres ingeridos de API-Football)
+   * antes de interpolarlo en HTML — evita romper el layout o inyectar
+   * markup si el dato trae '&', '<', '>' o comillas. */
+  private escapeHtml(text: string): string {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  private dailyDigestTemplate(digest: DailyDigest): string {
+    const esc = (text: string) => this.escapeHtml(text);
+
+    const matchRow = (m: DailyDigest['matches'][number]) => `
+      <tr style="border-bottom:1px solid #f3f4f6">
+        <td style="padding:12px 0">
+          <div style="font-weight:600;color:#111827">${esc(m.recommendation)}</div>
+          <div style="font-size:13px;color:#6b7280">${esc(m.homeTeam)} vs ${esc(m.awayTeam)} · ${esc(m.league)}</div>
+          <div style="font-size:12px;color:#9ca3af">${new Date(m.kickoffAt).toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' })} · ${new Date(m.kickoffAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}</div>
+        </td>
+        <td style="padding:12px 0;text-align:right">
+          <div style="font-weight:700;color:#10b981;font-size:18px">${(m.probability * 100).toFixed(0)}%</div>
+        </td>
+      </tr>`;
+
+    const propRow = (p: DailyDigest['props'][number]) => `
+      <tr style="border-bottom:1px solid #f3f4f6">
+        <td style="padding:12px 0">
+          <div style="font-weight:600;color:#111827">${esc(p.playerName)} — ${esc(p.label)}</div>
+          <div style="font-size:13px;color:#6b7280">${p.teamName ? esc(p.teamName) : ''}</div>
+          <div style="font-size:12px;color:#9ca3af">${esc(p.description)}</div>
+        </td>
+        <td style="padding:12px 0;text-align:right">
+          <div style="font-weight:700;color:#10b981;font-size:18px">${(p.probability * 100).toFixed(0)}%</div>
+        </td>
+      </tr>`;
+
+    return `
+      <div style="font-family:sans-serif;max-width:560px;margin:0 auto;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden">
+        <div style="background:#0f172a;padding:24px 32px">
+          <h2 style="color:#f8fafc;margin:0;font-size:18px">EdgeIQ — Resumen del día</h2>
+        </div>
+        <div style="padding:24px 32px;background:#fff">
+          ${
+            digest.matches.length > 0
+              ? `
+            <h3 style="color:#10b981;font-size:14px;margin:0 0 12px;text-transform:uppercase;letter-spacing:0.5px">
+              Partidos destacados (${digest.matches.length})
+            </h3>
+            <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:24px">
+              ${digest.matches.map(matchRow).join('')}
+            </table>
+          `
+              : ''
+          }
+          ${
+            digest.props.length > 0
+              ? `
+            <h3 style="color:#10b981;font-size:14px;margin:0 0 12px;text-transform:uppercase;letter-spacing:0.5px">
+              Props de jugadores (${digest.props.length})
+            </h3>
+            <table style="width:100%;border-collapse:collapse;font-size:14px">
+              ${digest.props.map(propRow).join('')}
+            </table>
+          `
+              : ''
+          }
+          <p style="margin:24px 0 0;font-size:12px;color:#9ca3af;text-align:center">
+            Generado por EdgeIQ · Las apuestas siempre conllevan riesgo
+          </p>
+        </div>
+      </div>
+    `;
   }
 
   // ── Email (Resend) ──

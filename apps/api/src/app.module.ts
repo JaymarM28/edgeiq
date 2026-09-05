@@ -50,7 +50,9 @@ import { AnalysisModule } from './domain/analysis/analysis.module';
         // Upstash, ver docs/DECISIONS.md) se propaga como 'error' event
         // sin manejar y tumba el proceso completo de Node.
         connection.on('error', (err) => {
-          logger.warn(`Conexión Redis: ${err instanceof Error ? err.message : err}`);
+          logger.warn(
+            `Conexión Redis: ${err instanceof Error ? err.message : err}`,
+          );
         });
         return { connection };
       },
