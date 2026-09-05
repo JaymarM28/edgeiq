@@ -91,6 +91,58 @@ export class PredictionsService {
     Object.assign(this._progress, update);
   }
 
+  /**
+   * Cachés por liga/equipo con TTL corto: `generateForUpcoming` recorre
+   * cientos de partidos y, sin esto, recalculaba promedios de liga, stats
+   * de equipo y ratings Elo desde cero (una query completa del historial
+   * de la liga) por cada partido y por cada jugador — el cuello de botella
+   * real detrás de que el análisis tardara 10+ minutos. El TTL (no una
+   * invalidación explícita) evita servir datos obsoletos si se ingiere
+   * data nueva entre corridas, sin tener que enganchar un evento de
+   * invalidación al módulo de ingestion.
+   */
+  private readonly CACHE_TTL_MS = 10 * 60 * 1000;
+  private readonly leagueGoalAvgCache = new Map<
+    string,
+    { value: LeagueGoalAverages | null; at: number }
+  >();
+  private readonly leagueEventAvgCache = new Map<
+    string,
+    { value: LeagueEventAverages | null; at: number }
+  >();
+  private readonly eloRatingsCache = new Map<
+    string,
+    { value: Record<string, number>; at: number }
+  >();
+  private readonly teamHomeStatsCache = new Map<
+    string,
+    { value: TeamGoalStats; at: number }
+  >();
+  private readonly teamAwayStatsCache = new Map<
+    string,
+    { value: TeamGoalStats; at: number }
+  >();
+  private readonly teamEventStatsCache = new Map<
+    string,
+    { value: TeamEventStats; at: number }
+  >();
+  private readonly rivalAdjustmentCache = new Map<
+    string,
+    { value: number; at: number }
+  >();
+
+  private async cached<T>(
+    cache: Map<string, { value: T; at: number }>,
+    key: string,
+    compute: () => Promise<T>,
+  ): Promise<T> {
+    const hit = cache.get(key);
+    if (hit && Date.now() - hit.at < this.CACHE_TTL_MS) return hit.value;
+    const value = await compute();
+    cache.set(key, { value, at: Date.now() });
+    return value;
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
@@ -366,7 +418,11 @@ export class PredictionsService {
       throw new NotFoundException('Partido no encontrado');
     }
 
-    const leagueAverages = await this.getLeagueGoalAverages(match.leagueId);
+    const leagueAverages = await this.cached(
+      this.leagueGoalAvgCache,
+      match.leagueId,
+      () => this.getLeagueGoalAverages(match.leagueId),
+    );
     if (!leagueAverages) {
       this.logger.warn(
         `Sin resultados históricos en la liga ${match.leagueId}; se omite predicción para ${matchId}.`,
@@ -374,10 +430,20 @@ export class PredictionsService {
       return false;
     }
 
-    const [homeStats, awayStats, eloResults] = await Promise.all([
-      this.getTeamHomeStats(match.leagueId, match.homeTeamId),
-      this.getTeamAwayStats(match.leagueId, match.awayTeamId),
-      this.getLeagueResults(match.leagueId),
+    const [homeStats, awayStats, ratings] = await Promise.all([
+      this.cached(
+        this.teamHomeStatsCache,
+        `${match.leagueId}:${match.homeTeamId}`,
+        () => this.getTeamHomeStats(match.leagueId, match.homeTeamId),
+      ),
+      this.cached(
+        this.teamAwayStatsCache,
+        `${match.leagueId}:${match.awayTeamId}`,
+        () => this.getTeamAwayStats(match.leagueId, match.awayTeamId),
+      ),
+      this.cached(this.eloRatingsCache, match.leagueId, async () =>
+        computeEloRatings(await this.getLeagueResults(match.leagueId)),
+      ),
     ]);
 
     // Guard contra Poisson degenerado: si matchesPlayed=0 O si los goles
@@ -410,7 +476,6 @@ export class PredictionsService {
       );
     }
 
-    const ratings = computeEloRatings(eloResults);
     const eloProbs = eloToOutcomeProbabilities(
       ratings[match.homeTeamId] ?? DEFAULT_ELO_RATING,
       ratings[match.awayTeamId] ?? DEFAULT_ELO_RATING,
@@ -523,9 +588,21 @@ export class PredictionsService {
   ) {
     for (const statType of EVENT_STAT_TYPES) {
       const [leagueAvg, homeStats, awayStats] = await Promise.all([
-        this.getLeagueEventAverages(leagueId, statType),
-        this.getTeamEventStats(leagueId, homeTeamId, 'home', statType),
-        this.getTeamEventStats(leagueId, awayTeamId, 'away', statType),
+        this.cached(
+          this.leagueEventAvgCache,
+          `${leagueId}:${statType}`,
+          () => this.getLeagueEventAverages(leagueId, statType),
+        ),
+        this.cached(
+          this.teamEventStatsCache,
+          `${leagueId}:${homeTeamId}:home:${statType}`,
+          () => this.getTeamEventStats(leagueId, homeTeamId, 'home', statType),
+        ),
+        this.cached(
+          this.teamEventStatsCache,
+          `${leagueId}:${awayTeamId}:away:${statType}`,
+          () => this.getTeamEventStats(leagueId, awayTeamId, 'away', statType),
+        ),
       ]);
 
       if (!leagueAvg) continue;
@@ -668,11 +745,10 @@ export class PredictionsService {
         const history = await this.getPlayerHistory(player.id, field);
 
         // Ajuste por rival: cuánto concede el rival de este stat vs el promedio
-        const rivalAdj = await this.getRivalAdjustment(
-          leagueId,
-          rivalTeamId,
-          rivalRole,
-          statType,
+        const rivalAdj = await this.cached(
+          this.rivalAdjustmentCache,
+          `${leagueId}:${rivalTeamId}:${rivalRole}:${statType}`,
+          () => this.getRivalAdjustment(leagueId, rivalTeamId, rivalRole, statType),
         );
 
         const predictions = predictPlayerOverUnder(
@@ -768,9 +844,10 @@ export class PredictionsService {
     const avgConceded = totalConceded / count;
 
     // Promedio de la liga para ese stat en el rol del oponente
-    const leagueAvg = await this.getLeagueEventAverages(
-      leagueId,
-      matchStatField,
+    const leagueAvg = await this.cached(
+      this.leagueEventAvgCache,
+      `${leagueId}:${matchStatField}`,
+      () => this.getLeagueEventAverages(leagueId, matchStatField),
     );
     if (!leagueAvg) return 1.0;
 
