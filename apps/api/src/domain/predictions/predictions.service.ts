@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../core/prisma/prisma.service';
+import { withDbRetry } from '../../core/prisma/db-retry';
 import {
   NotificationsService,
   type ValueBetAlert,
@@ -196,7 +197,16 @@ export class PredictionsService {
           detail: `Partido ${i + 1}/${allUpcoming.length} — ${leagueName}`,
         });
 
-        const ok = await this.generateForMatch(id);
+        let ok = false;
+        try {
+          ok = await withDbRetry(() => this.generateForMatch(id));
+        } catch (err) {
+          this.logger.warn(
+            `Partido ${id} falló tras reintentos, se omite: ${
+              err instanceof Error ? err.message : err
+            }`,
+          );
+        }
         if (ok) {
           generated += 1;
           lc.generated += 1;
@@ -716,23 +726,25 @@ export class PredictionsService {
     const matchStatField: EventStatType = 'shotsOnTarget';
 
     // Partidos del rival en su rol, con stats del oponente (no del rival)
-    const rivalMatches = await this.prisma.match.findMany({
-      where: {
-        leagueId,
-        ...(rivalRole === 'home'
-          ? { homeTeamId: rivalTeamId }
-          : { awayTeamId: rivalTeamId }),
-        status: 'FINISHED' as const,
-        matchStatistics: { some: {} },
-      },
-      select: {
-        homeTeamId: true,
-        awayTeamId: true,
-        matchStatistics: {
-          select: { teamId: true, [matchStatField]: true },
+    const rivalMatches = await withDbRetry(() =>
+      this.prisma.match.findMany({
+        where: {
+          leagueId,
+          ...(rivalRole === 'home'
+            ? { homeTeamId: rivalTeamId }
+            : { awayTeamId: rivalTeamId }),
+          status: 'FINISHED' as const,
+          matchStatistics: { some: {} },
         },
-      },
-    });
+        select: {
+          homeTeamId: true,
+          awayTeamId: true,
+          matchStatistics: {
+            select: { teamId: true, [matchStatField]: true },
+          },
+        },
+      }),
+    );
 
     if (rivalMatches.length === 0) return 1.0;
 
@@ -786,11 +798,13 @@ export class PredictionsService {
     playerId: string,
     field: string,
   ): Promise<PlayerHistoryStat[]> {
-    const stats = await this.prisma.playerMatchStat.findMany({
-      where: { playerId },
-      select: { minutes: true, [field]: true },
-      orderBy: { match: { kickoffAt: 'desc' } },
-    });
+    const stats = await withDbRetry(() =>
+      this.prisma.playerMatchStat.findMany({
+        where: { playerId },
+        select: { minutes: true, [field]: true },
+        orderBy: { match: { kickoffAt: 'desc' } },
+      }),
+    );
 
     return stats.map((s) => ({
       value: (s as Record<string, unknown>)[field] as number,
