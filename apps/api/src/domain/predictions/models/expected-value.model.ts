@@ -1,3 +1,13 @@
+/**
+ * Tope realista de edge para mostrar/notificar un value bet. En mercados
+ * eficientes (ligas top rastreadas) un edge sostenido rara vez supera 30-40%;
+ * cualquier cosa por encima casi siempre delata un equipo sin historial en
+ * la liga (rating Elo/Poisson por defecto) en vez de una oportunidad real —
+ * ver docs/LEARNINGS.md. Antes el tope era 2.0 (200%), que dejaba pasar
+ * exactamente ese tipo de falsos positivos.
+ */
+export const MAX_REALISTIC_EDGE = 0.5;
+
 export interface ValueBetInput {
   /** Probabilidad que asigna el modelo al resultado, en [0,1]. */
   modelProbability: number;

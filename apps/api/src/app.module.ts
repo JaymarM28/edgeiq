@@ -1,9 +1,8 @@
-import { BullModule } from '@nestjs/bullmq';
-import { Logger, Module } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
-import Redis from 'ioredis';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './core/prisma/prisma.module';
@@ -26,6 +25,7 @@ import { AnalysisModule } from './domain/analysis/analysis.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([
       {
         // Límite global por defecto: 100 req/min por IP. Endpoints
@@ -34,29 +34,6 @@ import { AnalysisModule } from './domain/analysis/analysis.module';
         limit: 100,
       },
     ]),
-    BullModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => {
-        const logger = new Logger('RedisConnection');
-        const connection = new Redis(
-          config.get<string>('REDIS_URL', 'redis://localhost:6379'),
-          {
-            maxRetriesPerRequest: null,
-          },
-        );
-        // Sin este listener, un error de conexión (ej. el proveedor de
-        // Redis cerrando comandos bloqueantes como BZPOPMIN — pasa con
-        // Upstash, ver docs/DECISIONS.md) se propaga como 'error' event
-        // sin manejar y tumba el proceso completo de Node.
-        connection.on('error', (err) => {
-          logger.warn(
-            `Conexión Redis: ${err instanceof Error ? err.message : err}`,
-          );
-        });
-        return { connection };
-      },
-    }),
     GroqModule,
     ClaudeModule,
     PrismaModule,

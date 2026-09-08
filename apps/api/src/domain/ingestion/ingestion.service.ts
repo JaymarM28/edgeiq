@@ -515,7 +515,9 @@ export class IngestionService {
     const league = await this.upsertLeague(resolved);
     const season = seasonOverride ?? resolved.currentSeason;
 
-    this.updateProgress({ detail: `${resolved.name}: sincronizando fixtures…` });
+    this.updateProgress({
+      detail: `${resolved.name}: sincronizando fixtures…`,
+    });
     this.logger.log(`  [${resolved.name}] Sincronizando fixtures…`);
     let fixtures: SyncOutcome;
     try {
@@ -565,7 +567,9 @@ export class IngestionService {
     }
 
     // Stats de equipo y jugador para partidos terminados sin stats
-    this.updateProgress({ detail: `${resolved.name}: sincronizando match stats…` });
+    this.updateProgress({
+      detail: `${resolved.name}: sincronizando match stats…`,
+    });
     this.logger.log(`  [${resolved.name}] Sincronizando match stats…`);
     let matchStats: SyncOutcome;
     try {
@@ -580,7 +584,9 @@ export class IngestionService {
       );
     }
 
-    this.updateProgress({ detail: `${resolved.name}: sincronizando player stats…` });
+    this.updateProgress({
+      detail: `${resolved.name}: sincronizando player stats…`,
+    });
     this.logger.log(`  [${resolved.name}] Sincronizando player stats…`);
     let playerStats: SyncOutcome;
     try {
@@ -596,7 +602,9 @@ export class IngestionService {
     }
 
     // Lesiones y sanciones
-    this.updateProgress({ detail: `${resolved.name}: sincronizando lesiones…` });
+    this.updateProgress({
+      detail: `${resolved.name}: sincronizando lesiones…`,
+    });
     this.logger.log(`  [${resolved.name}] Sincronizando lesiones…`);
     let injuries: SyncOutcome;
     try {

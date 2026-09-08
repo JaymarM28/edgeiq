@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../core/prisma/prisma.service';
 import { GroqService } from '../../core/integrations/groq/groq.service';
 import { ClaudeService } from '../../core/integrations/claude/claude.service';
+import { MAX_REALISTIC_EDGE } from './models/expected-value.model';
 
 const SYSTEM_PROMPT = `Eres un analista deportivo de élite especializado en apuestas de fútbol con enfoque cuantitativo. Tu trabajo es explicar en español POR QUÉ una apuesta específica tiene valor, basándote ÚNICAMENTE en los datos estadísticos que te proporciono.
 
@@ -104,16 +105,17 @@ export class ExplanationsService {
     onProgress?: (current: number, total: number) => void,
   ): Promise<number> {
     if (!this.claude.isConfigured && !this.groq.isConfigured) {
-      this.logger.warn('Ningún proveedor LLM configurado, se omiten explicaciones');
+      this.logger.warn(
+        'Ningún proveedor LLM configurado, se omiten explicaciones',
+      );
       return 0;
     }
 
-    const MAX_EDGE = 2.0;
     const MIN_EDGE = 0.05;
 
     const predictions = await this.prisma.prediction.findMany({
       where: {
-        edge: { gte: MIN_EDGE, lte: MAX_EDGE },
+        edge: { gte: MIN_EDGE, lte: MAX_REALISTIC_EDGE },
         explanation: null,
         match: { status: 'SCHEDULED' },
       },

@@ -13,7 +13,10 @@ import {
   eloToOutcomeProbabilities,
   type EloMatchResult,
 } from './models/elo.model';
-import { evaluateValueBet } from './models/expected-value.model';
+import {
+  evaluateValueBet,
+  MAX_REALISTIC_EDGE,
+} from './models/expected-value.model';
 import {
   type EventStatType,
   type LeagueEventAverages,
@@ -340,12 +343,11 @@ export class PredictionsService {
    * y envía una notificación consolidada.
    */
   private async notifyNewValueBets() {
-    const MAX_EDGE = 2.0;
     const MIN_NOTIFY_EDGE = 0.07; // Solo media y alta
 
     const valueBets = await this.prisma.prediction.findMany({
       where: {
-        edge: { gt: MIN_NOTIFY_EDGE, lte: MAX_EDGE },
+        edge: { gt: MIN_NOTIFY_EDGE, lte: MAX_REALISTIC_EDGE },
         match: { status: 'SCHEDULED' },
       },
       orderBy: { edge: 'desc' },
@@ -476,19 +478,37 @@ export class PredictionsService {
       );
     }
 
-    const eloProbs = eloToOutcomeProbabilities(
-      ratings[match.homeTeamId] ?? DEFAULT_ELO_RATING,
-      ratings[match.awayTeamId] ?? DEFAULT_ELO_RATING,
-    );
-    const calibratedElo = this.calibration.apply('elo_v1', eloProbs);
-    await this.storePrediction(match.id, 'elo_v1', calibratedElo);
+    // Un equipo sin ningún partido TERMINADO en esta liga (típico de
+    // competiciones continentales con clubes de ligas que no rastreamos,
+    // ej. Bodø/Glimt, Feyenoord) cae al rating Elo por defecto (1500) si no
+    // se guarda esto explícito — eso hace que el modelo lo trate como
+    // "equipo promedio" y genere edges gigantes y falsos contra la cuota
+    // real de la casa. Mejor omitir la predicción que inventar una señal.
+    const hasEloSignal =
+      match.homeTeamId in ratings && match.awayTeamId in ratings;
+
+    let eloProbs: MatchOutcomeProbabilities | null = null;
+    if (hasEloSignal) {
+      eloProbs = eloToOutcomeProbabilities(
+        ratings[match.homeTeamId] ?? DEFAULT_ELO_RATING,
+        ratings[match.awayTeamId] ?? DEFAULT_ELO_RATING,
+      );
+      const calibratedElo = this.calibration.apply('elo_v1', eloProbs);
+      await this.storePrediction(match.id, 'elo_v1', calibratedElo);
+    } else {
+      this.logger.warn(
+        `Uno de los equipos del partido ${matchId} no tiene partidos terminados en esta liga; se omite elo_v1.`,
+      );
+    }
 
     // ── Ensemble: combina Poisson + Elo ──
-    if (poissonProbs) {
+    if (poissonProbs && eloProbs) {
       const raw = ensembleProbabilities(poissonProbs, eloProbs);
       const calibratedEnsemble = this.calibration.apply('ensemble_v1', raw);
       await this.storePrediction(match.id, 'ensemble_v1', calibratedEnsemble);
     }
+
+    if (!poissonProbs && !eloProbs) return false;
 
     // ── Nivel 1: over/under de eventos por equipo ──
     await this.generateEventPredictions(
@@ -510,10 +530,9 @@ export class PredictionsService {
   }
 
   getValueBets(minEdge?: number) {
-    const MAX_EDGE = 2.0; // Cap at 200% — higher edges are unreliable (low-data teams)
     return this.prisma.prediction.findMany({
       where: {
-        edge: { gt: minEdge ?? this.edgeThreshold, lte: MAX_EDGE },
+        edge: { gt: minEdge ?? this.edgeThreshold, lte: MAX_REALISTIC_EDGE },
         match: { status: 'SCHEDULED' },
       },
       orderBy: { edge: 'desc' },
@@ -588,10 +607,8 @@ export class PredictionsService {
   ) {
     for (const statType of EVENT_STAT_TYPES) {
       const [leagueAvg, homeStats, awayStats] = await Promise.all([
-        this.cached(
-          this.leagueEventAvgCache,
-          `${leagueId}:${statType}`,
-          () => this.getLeagueEventAverages(leagueId, statType),
+        this.cached(this.leagueEventAvgCache, `${leagueId}:${statType}`, () =>
+          this.getLeagueEventAverages(leagueId, statType),
         ),
         this.cached(
           this.teamEventStatsCache,
@@ -748,7 +765,8 @@ export class PredictionsService {
         const rivalAdj = await this.cached(
           this.rivalAdjustmentCache,
           `${leagueId}:${rivalTeamId}:${rivalRole}:${statType}`,
-          () => this.getRivalAdjustment(leagueId, rivalTeamId, rivalRole, statType),
+          () =>
+            this.getRivalAdjustment(leagueId, rivalTeamId, rivalRole, statType),
         );
 
         const predictions = predictPlayerOverUnder(

@@ -9,7 +9,7 @@ const logger = new Logger('DbRetry');
  * reabre la conexión en el siguiente request.
  */
 const TRANSIENT_PATTERNS = [
-  "Server has closed the connection",
+  'Server has closed the connection',
   "Can't reach database server",
   'Connection terminated',
   'ECONNRESET',

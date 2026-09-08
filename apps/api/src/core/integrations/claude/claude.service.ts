@@ -19,7 +19,9 @@ export class ClaudeService {
     this.model = this.config.get<string>('CLAUDE_MODEL', 'claude-haiku-4-5');
 
     if (!this.client) {
-      this.logger.warn('ANTHROPIC_API_KEY no configurada, Claude deshabilitado');
+      this.logger.warn(
+        'ANTHROPIC_API_KEY no configurada, Claude deshabilitado',
+      );
     }
   }
 
@@ -44,8 +46,9 @@ export class ClaudeService {
       .map((m) => m.content)
       .join('\n');
     const conversation = messages
-      .filter((m): m is { role: 'user' | 'assistant'; content: string } =>
-        m.role !== 'system',
+      .filter(
+        (m): m is { role: 'user' | 'assistant'; content: string } =>
+          m.role !== 'system',
       )
       .map((m) => ({ role: m.role, content: m.content }));
 

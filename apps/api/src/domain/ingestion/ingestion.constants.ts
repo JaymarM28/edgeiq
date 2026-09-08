@@ -1,6 +1,3 @@
-export const INGESTION_QUEUE = 'ingestion';
-export const SYNC_ALL_JOB = 'sync-all';
-
 /**
  * Máximo de partidos terminados por liga por sync a los que se les piden
  * stats (/fixtures/statistics + /fixtures/players). Controla el consumo
