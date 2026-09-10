@@ -4,6 +4,7 @@ import {
   type ResolvedLeague,
 } from '../../core/integrations/api-football/api-football.service';
 import { PrismaService } from '../../core/prisma/prisma.service';
+import { withDbRetry } from '../../core/prisma/db-retry';
 import { ODDS_MARKET_MAPPINGS, STATS_BATCH_SIZE } from './ingestion.constants';
 import { BACKFILL_SEASONS, TRACKED_LEAGUES } from './leagues.config';
 
@@ -693,7 +694,28 @@ export class IngestionService {
         this.logger.log(
           `[${qi + 1}/${queries.length}] Sincronizando ${resolved.name} (${resolved.id}) temporada ${options?.season ?? resolved.currentSeason}…`,
         );
-        results.push(await this.syncResolvedLeague(resolved, options?.season));
+        try {
+          results.push(
+            await withDbRetry(() =>
+              this.syncResolvedLeague(resolved, options?.season),
+            ),
+          );
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.logger.warn(
+            `Liga ${resolved.name} falló tras reintentos, se omite: ${message}`,
+          );
+          results.push({
+            league: resolved.name,
+            leagueId: resolved.id,
+            season: options?.season ?? resolved.currentSeason,
+            fixtures: { error: message },
+            odds: { error: message },
+            matchStats: { error: message },
+            playerStats: { error: message },
+            injuries: { error: message },
+          });
+        }
       }
       this.updateProgress({
         status: 'done',
