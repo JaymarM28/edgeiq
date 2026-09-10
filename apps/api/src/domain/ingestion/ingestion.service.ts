@@ -667,12 +667,26 @@ export class IngestionService {
               : `"${query.name}" (${query.country})`
           }…`,
         );
-        const resolved = await this.apiFootball.resolveLeague(query);
+        const label =
+          'id' in query
+            ? `id=${query.id}`
+            : `"${query.name}" (${query.country})`;
+
+        let resolved: ResolvedLeague | null;
+        try {
+          resolved = await this.apiFootball.resolveLeague(query);
+        } catch (err) {
+          // API-Football responde 429 (rate limit) como error HTTP, no como
+          // "liga no encontrada" — sin este catch, axios tira la excepción
+          // fuera del loop entero y tumba TODA la sincronización con un 500,
+          // perdiendo también las ligas que ya habían sincronizado bien.
+          this.logger.warn(
+            `Resolviendo liga ${label} falló: ${err instanceof Error ? err.message : err}`,
+          );
+          resolved = null;
+        }
+
         if (!resolved) {
-          const label =
-            'id' in query
-              ? `id=${query.id}`
-              : `"${query.name}" (${query.country})`;
           this.logger.warn(
             `No se pudo resolver la liga ${label} en API-Football`,
           );
