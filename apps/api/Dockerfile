@@ -26,6 +26,12 @@ CMD ["sh", "-c", "npx prisma generate && pnpm dev"]
 # --- build: compila el paquete api a dist/ ---
 FROM deps AS build
 COPY . .
+# @edgeiq/shared apunta a su dist/ compilado (no a src/*.ts) porque el
+# runtime de producción de la API usa `node dist/main.js` puro — sin
+# transpilación en caliente, un require() de TypeScript sin compilar
+# revienta con "Unexpected token 'export'". Compilarlo antes del deploy
+# asegura que ese dist/ quede incluido en el paquete aislado.
+RUN pnpm --filter @edgeiq/shared build
 RUN pnpm --filter @edgeiq/api build
 RUN pnpm --filter @edgeiq/api deploy --prod /prod/api
 
