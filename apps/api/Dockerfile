@@ -6,11 +6,15 @@ WORKDIR /repo
 
 # --- deps: instala dependencias del workspace completo (cache-friendly) ---
 FROM base AS deps
-COPY pnpm-workspace.yaml package.json pnpm-lock.yaml* ./
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml* tsconfig.base.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/api/prisma ./apps/api/prisma
 COPY apps/web/package.json apps/web/package.json
-COPY packages/shared/package.json packages/shared/package.json
+COPY packages/shared ./packages/shared
+# packages/shared tiene un script `prepare` (tsc) que `pnpm install` corre
+# automáticamente — necesita su tsconfig.json y src/ ya presentes (no solo
+# package.json) para no fallar, por eso se copia la carpeta completa acá
+# en vez de solo el manifest como el resto de los paquetes.
 RUN pnpm install --frozen-lockfile
 
 # --- dev: hot-reload montando el código como volumen (ver docker-compose.override.yml) ---
